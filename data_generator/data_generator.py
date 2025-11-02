@@ -1,5 +1,6 @@
 import random
 import pandas as pd
+import re
 from typing import Dict, Any, List, Callable, Tuple
 
 # Load dataframe globally for random value generation
@@ -85,7 +86,26 @@ def create_single_turn_example(instruction: str, df_filtered, parser, max_result
         "evidence_ids": evidence_ids
     }
 
-NUM_TO_WORD = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+# Map numbers to a list of possible wordings so we can randomize phrasing per example
+NUM_TO_WORD = {
+    1: ["one", "1", "a single", "single"],
+    2: ["two", "2", "a couple of"],
+    3: ["three", "3"],
+    4: ["four", "4"],
+    5: ["five", "5"]
+}
+
+
+def random_num_word(num_results: int) -> str:
+    """Return a randomized wording for the requested number of results.
+
+    Falls back to the numeric string if no variants are available.
+    """
+    variants = NUM_TO_WORD.get(num_results)
+    if variants:
+        return random.choice(variants)
+    return str(num_results)
+
 
 TEMPLATE_TAGS = {
     'diet': ['vegetarian', 'gluten-free', 'vegan', 'low-carb'],
@@ -147,7 +167,7 @@ QueryFunc = Callable[[pd.DataFrame], pd.DataFrame]
 
 # Single-turn templates
 def single_template_1(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFunc]:
-    num_word = NUM_TO_WORD.get(num_results, str(num_results))
+    num_word = random_num_word(num_results)
     tag_name = random.choice(TEMPLATE_TAGS['diet'])
     cal_limit = random_calorie_limit(df, low=True)
     sod_limit = random_sodium_max(df)
@@ -165,7 +185,7 @@ def single_template_1(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFun
     return instruction, query_func
 
 def single_template_2(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFunc]:
-    num_word = NUM_TO_WORD.get(num_results, str(num_results))
+    num_word = random_num_word(num_results)
     tag_name = random.choice(TEMPLATE_TAGS['meal'][:3])  # breakfast, lunch, or dinner
     prot_limit = random_protein_min(df)
     dur_limit = random_duration_max(df)
@@ -181,7 +201,7 @@ def single_template_2(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFun
     return instruction, query_func
 
 def single_template_3(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFunc]:
-    num_word = NUM_TO_WORD.get(num_results, str(num_results))
+    num_word = random_num_word(num_results)
     tag_name = random.choice(['dinner', 'lunch'])
     carb_limit = random_carb_max(df)
     prot_limit = random_protein_min(df)
@@ -197,7 +217,7 @@ def single_template_3(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFun
     return instruction, query_func
 
 def single_template_4(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFunc]:
-    num_word = NUM_TO_WORD.get(num_results, str(num_results))
+    num_word = random_num_word(num_results)
     cal_limit = random_calorie_limit(df, low=True)
     sug_limit = random_sugar_max(df)
     fat_limit = random_saturated_fat_max(df)
@@ -214,7 +234,7 @@ def single_template_4(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFun
     return instruction, query_func
 
 def single_template_5(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFunc]:
-    num_word = NUM_TO_WORD.get(num_results, str(num_results))
+    num_word = random_num_word(num_results)
     tag_name = random.choice(['gluten-free', 'vegetarian', 'vegan'])
     rating = random_rating_min(df)
     dur_limit = random_duration_max(df)
@@ -230,7 +250,7 @@ def single_template_5(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFun
     return instruction, query_func
 
 def single_template_6(df: pd.DataFrame, num_results: int) -> Tuple[str, QueryFunc]:
-    num_word = NUM_TO_WORD.get(num_results, str(num_results))
+    num_word = random_num_word(num_results)
     tag_name = random.choice(['dinner', 'family-friendly'])
     serves_display, serves_regex = random_serves(df)
     cal_min, cal_max = random_calorie_moderate_range(df)
@@ -256,6 +276,14 @@ def generate_random_examples(df: pd.DataFrame, parser: Any, num_examples: int, n
         single_template_4, single_template_5, single_template_6
     ]
     
+    # <<< FIX: Create a list of valid numbers of results to ask for >>>
+    # We'll use the keys from NUM_TO_WORD that are <= the requested max
+    valid_nums = [k for k in NUM_TO_WORD.keys() if k <= num_results_per_example]
+    # If the list is empty (e.g., user passed 0, or just a large number),
+    # default to the full list of supported numbers.
+    if not valid_nums:
+        valid_nums = list(NUM_TO_WORD.keys())
+        
     examples = []
     attempts = 0
     max_attempts = num_examples * 5
@@ -267,7 +295,10 @@ def generate_random_examples(df: pd.DataFrame, parser: Any, num_examples: int, n
         # Pick template
         template_func = random.choice(template_generators)
         
-        instruction, query_func = template_func(df, num_results_per_example)
+        # <<< FIX: Pick a random number of results *for each example* >>>
+        current_num_results = random.choice(valid_nums)
+        
+        instruction, query_func = template_func(df, current_num_results)
         results = query_func(df)
         
         # Create example if results found
@@ -277,7 +308,7 @@ def generate_random_examples(df: pd.DataFrame, parser: Any, num_examples: int, n
                 instruction=instruction,
                 df_filtered=results,
                 parser=parser,
-                max_results=num_results_per_example
+                max_results=current_num_results # <<< Use the new random number
             )
             
             # Check for duplicate recipe sets (use sorted tuple for simpler comparison)
@@ -339,7 +370,7 @@ def create_multi_turn_example(conversation: List[str], df_filtered, parser, max_
 # Multi-turn templates
 def multi_template_1(df: pd.DataFrame, num_results: int):
     """Quick diet lunch follow-up flow"""
-    num_word = NUM_TO_WORD.get(num_results, str(num_results))
+    num_word = random_num_word(num_results)
     tag_name = random.choice(TEMPLATE_TAGS['diet'])
     cal_limit = random_calorie_limit(df, low=True)
     sod_limit = random_sodium_max(df)
@@ -363,7 +394,7 @@ def multi_template_1(df: pd.DataFrame, num_results: int):
 
 def multi_template_2(df: pd.DataFrame, num_results: int):
     """Generic nutrient goal template"""
-    num_word = NUM_TO_WORD.get(num_results, str(num_results))
+    num_word = random_num_word(num_results)
     tag_name = random.choice(TEMPLATE_TAGS['meal'][:3])
     
     # Choose random nutrient type and value
@@ -398,7 +429,7 @@ def multi_template_2(df: pd.DataFrame, num_results: int):
 
 def multi_template_3(df: pd.DataFrame, num_results: int):
     """Low-carb with protein goal"""
-    num_word = NUM_TO_WORD.get(num_results, str(num_results))
+    num_word = random_num_word(num_results)
     tag_name = random.choice(['dinner', 'lunch'])
     carb_limit = random_carb_max(df)
     prot_limit = random_protein_min(df)
