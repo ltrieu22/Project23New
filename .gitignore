@@ -28,9 +28,6 @@ wheels/
 .installed.cfg
 *.egg
 
-# Poetry
-poetry.lock
-
 # Jupyter Notebook
 .ipynb_checkpoints/
 *.ipynb_checkpoints
